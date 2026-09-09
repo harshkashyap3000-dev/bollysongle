@@ -15,7 +15,12 @@ const altKeywords = [
 
 const songs: Song[] = (rawSongs as Song[]).filter((s) => {
   const lowerTitle = s.title.toLowerCase();
-  return !altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTitle));
+  // 1. Filter out alternate versions
+  const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTitle));
+  // 2. Filter out anything released before the year 2000
+  const isPre2000 = Number(s.year) < 2000;
+
+  return !isAlt && !isPre2000;
 });
 
 // --- FAME CATEGORIZATION ENGINE ---
