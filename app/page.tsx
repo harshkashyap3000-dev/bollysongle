@@ -15,12 +15,16 @@ const altKeywords = [
 
 const songs: Song[] = (rawSongs as Song[]).filter((s) => {
   const lowerTitle = s.title.toLowerCase();
-  // 1. Filter out alternate versions
   const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTitle));
-  // 2. Filter out anything released before the year 2000
   const isPre2000 = Number(s.year) < 2000;
 
   return !isAlt && !isPre2000;
+}).map((s) => {
+  // CLEANUP: If the scraper accidentally put a legacy singer/actor as the composer, clear it or fix it
+  if (s.composer?.toLowerCase().includes('kishore kumar') || s.composer?.toLowerCase().includes('mohammed rafi')) {
+    return { ...s, composer: 'Various / Unknown' };
+  }
+  return s;
 });
 
 // --- FAME CATEGORIZATION ENGINE ---
