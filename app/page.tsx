@@ -146,13 +146,14 @@ export default function BollyGuesser() {
     setGuesses(updatedGuesses);
     setSearchTerm('');
 
-    if (song.id === targetSong.id) {
+    // Force both IDs to Strings to prevent type mismatch bugs
+    if (String(song.id) === String(targetSong.id)) {
       setHasWon(true);
       setIsGameOver(true);
-      setTimeout(() => setShowEndModal(true), 1500); 
+      setTimeout(() => setShowEndModal(true), 500); 
     } else if (updatedGuesses.length >= MAX_GUESSES) {
       setIsGameOver(true);
-      setTimeout(() => setShowEndModal(true), 1500);
+      setTimeout(() => setShowEndModal(true), 500);
     }
   };
 
