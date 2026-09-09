@@ -211,10 +211,18 @@ export default function BollyGuesser() {
   };
 
   const isActorRevealed = (actor: string) => {
-    const targetActorLower = actor.toLowerCase();
-    return isGameOver || 
-      guesses.some((g) => g.song.actors.some(a => a.toLowerCase() === targetActorLower)) || 
-      revealedHints.includes(actor);
+    if (isGameOver || revealedHints.includes(actor)) return true;
+    
+    const targetActorParts = actor.toLowerCase().trim().split(/\s+/);
+    
+Logan:
+    return guesses.some((g) => {
+      return (g.song.actors || []).some((guessActor) => {
+        const guessActorParts = guessActor.toLowerCase().trim().split(/\s+/);
+        // If any part of the name matches (e.g., "Ameesha" matches "Amisha" or "Patel" matches "Patel")
+        return targetActorParts.some(tp => guessActorParts.some(gp => tp === gp));
+      });
+    });
   };
 
   const renderPill = (value: string | undefined, isRevealed: boolean, baseColor: string, emptyColor: string, hoverColor: string, isMoviePill = false) => {
