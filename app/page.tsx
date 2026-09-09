@@ -194,10 +194,28 @@ export default function BollyGuesser() {
     setActiveLifeline(null);
   };
 
-  const isMovieRevealed = isGameOver || guesses.some((g) => g.song.movie === targetSong?.movie) || revealedHints.includes(targetSong?.movie || '');
-  const isComposerRevealed = isGameOver || guesses.some((g) => g.composerMatch === 'correct') || revealedHints.includes(targetSong?.composer || '');
-  const isSingerRevealed = (singer: string) => isGameOver || guesses.some((g) => g.song.singers.includes(singer)) || revealedHints.includes(singer);
-  const isActorRevealed = (actor: string) => isGameOver || guesses.some((g) => g.song.actors.includes(actor)) || revealedHints.includes(actor);
+ // Automatically reveals if guessed in any past guess, revealed via lifeline, OR matched by a previous guess!
+  const isMovieRevealed = isGameOver || 
+    guesses.some((g) => g.song.movie.toLowerCase() === targetSong?.movie.toLowerCase()) || 
+    revealedHints.includes(targetSong?.movie || '');
+
+  const isComposerRevealed = isGameOver || 
+    guesses.some((g) => g.composerMatch === 'correct') || 
+    revealedHints.includes(targetSong?.composer || '');
+
+  const isSingerRevealed = (singer: string) => {
+    const targetLower = singer.toLowerCase();
+    return isGameOver || 
+      guesses.some((g) => g.song.singers.some(s => s.toLowerCase() === targetLower)) || 
+      revealedHints.includes(singer);
+  };
+
+  const isActorRevealed = (actor: string) => {
+    const targetActorLower = actor.toLowerCase();
+    return isGameOver || 
+      guesses.some((g) => g.song.actors.some(a => a.toLowerCase() === targetActorLower)) || 
+      revealedHints.includes(actor);
+  };
 
   const renderPill = (value: string | undefined, isRevealed: boolean, baseColor: string, emptyColor: string, hoverColor: string, isMoviePill = false) => {
     if (!value) return null;
