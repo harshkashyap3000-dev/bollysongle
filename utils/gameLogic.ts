@@ -8,13 +8,13 @@ export function evaluateGuess(guess: Song, target: Song): GuessResult {
   const movieMatch = guess.movie === target.movie ? 'correct' : 'incorrect';
   const composerMatch = guess.composer === target.composer ? 'correct' : 'incorrect';
   
-  let actorsMatch: 'correct' | 'partial' | 'incorrect' = 'incorrect';
-  
-  // Safety fallback in case any array is undefined
-  const targetActors = target.actors || [];
-  const guessActors = guess.actors || [];
+  // Normalize strings for robust matching (lowercase and trim spaces)
+  const targetActors = (target.actors || []).map(a => a.toLowerCase().trim());
+  const guessActors = (guess.actors || []).map(a => a.toLowerCase().trim());
   
   const commonActors = guessActors.filter(a => targetActors.includes(a));
+  
+  let actorsMatch: 'correct' | 'partial' | 'incorrect' = 'incorrect';
   
   if (commonActors.length === targetActors.length && targetActors.length > 0 && guessActors.length === targetActors.length) {
     actorsMatch = 'correct';
