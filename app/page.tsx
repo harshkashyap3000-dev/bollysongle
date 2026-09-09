@@ -225,8 +225,15 @@ export default function BollyGuesser() {
   // --- NEW SHARING FORMAT LOGIC ---
   const copyResults = () => {
     const numWords = ['FAILED', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
-    const turnWord = hasWon ? numWords[guesses.length] : 'FAILED';
-    const header = `BollySongle #${dayNumber}: ${turnWord} ${hasWon && guesses.length === 1 ? 'turn' : 'turns'}!\n${todayStr}\n`;
+    
+    // Fixes the "FAILED turns!" grammar issue
+    let headerText = '';
+    if (hasWon) {
+      headerText = `BollySongle #${dayNumber}: ${numWords[guesses.length]} ${guesses.length === 1 ? 'turn' : 'turns'}!`;
+    } else {
+      headerText = `BollySongle #${dayNumber}: FAILED!`;
+    }
+    const header = `${headerText}\n${todayStr}\n`;
 
     const getNumberEmoji = (num: number) => {
       const emojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
@@ -261,12 +268,12 @@ export default function BollyGuesser() {
       return `🔴${redStr}|🟢${greenStr}|🔵${blueStr}`;
     }).join('\n');
 
-    const footer = `\n\nPlay at bollysongle.com\n\n🔴: Year + Movie\n🟢: Cast\n🔵: Audio (Music Director + Singers)`;
+    // Added https:// so messaging apps automatically make it clickable
+    const footer = `\n\nPlay at https://bollysongle.vercel.app\n\n🔴: Year + Movie\n🟢: Cast\n🔵: Audio (Music Director + Singers)`;
 
     navigator.clipboard.writeText(header + '\n' + grid + footer);
     alert('Results copied to clipboard!');
   };
-
 
   if (currentScreen === 'menu') {
     return (
