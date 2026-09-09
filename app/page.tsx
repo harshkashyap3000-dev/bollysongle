@@ -99,7 +99,26 @@ export default function BollyGuesser() {
   const [dayNumber, setDayNumber] = useState<number | string>(1);
   const [todayStr, setTodayStr] = useState('');
 
+  // UI States
+  const [showExample, setShowExample] = useState(false);
+  const [showLifelinesInfo, setShowLifelinesInfo] = useState(false);
+  const [activeTooltip, setActiveTooltip] = useState<'movie' | 'cast' | null>(null);
+
+  // --- Browser Back Button Interceptor ---
+  useEffect(() => {
+    const handlePopState = () => {
+      if (currentScreen !== 'menu') {
+        setCurrentScreen('menu');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [currentScreen]);
+
   const startNewGame = (mode: 'daily' | 'unlimited') => {
+    // Push state so mobile back button works properly
+    window.history.pushState({ screen: 'game' }, '');
+
     setGameMode(mode);
     setGuesses([]);
     setIsGameOver(false);
@@ -374,7 +393,10 @@ export default function BollyGuesser() {
   }
 
   return (
-    <main className="min-h-screen bg-[#111111] text-zinc-300 font-sans p-4 md:p-8 flex justify-center relative">
+    <main 
+      className="min-h-screen bg-[#111111] text-zinc-300 font-sans p-4 md:p-8 flex justify-center relative"
+      onClick={() => activeTooltip && setActiveTooltip(null)}
+    >
       <div className="w-full max-w-5xl flex flex-col gap-6">
         
         <header className="w-full flex items-center justify-between pt-2 pb-2 border-b border-zinc-800/50">
@@ -386,7 +408,7 @@ export default function BollyGuesser() {
 
         {currentScreen === 'instructions' && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div className="bg-[#181818] border border-zinc-700/50 rounded-2xl max-w-lg w-full shadow-2xl relative overflow-hidden">
+            <div className="bg-[#181818] border border-zinc-700/50 rounded-2xl max-w-lg w-full shadow-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto">
               <div className="p-6">
                 <button onClick={() => setCurrentScreen('game')} className="absolute top-5 right-5 w-7 h-7 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center hover:bg-zinc-700 hover:text-white transition-colors">✕</button>
                 
@@ -406,16 +428,46 @@ export default function BollyGuesser() {
                 </ul>
 
                 <div className="flex flex-col gap-3">
-                  <div className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex items-center gap-2 cursor-not-allowed opacity-70">
-                    <span className="text-zinc-500">▶</span> Example
+                  {/* Interactive Example Accordion */}
+                  <div 
+                    className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex flex-col gap-2 cursor-pointer transition-colors hover:bg-[#1a1a1a]"
+                    onClick={() => setShowExample(!showExample)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-zinc-500 transition-transform ${showExample ? 'rotate-90' : ''}`}>▶</span> 
+                      <span className="text-zinc-300">Example</span>
+                    </div>
+                    {showExample && (
+                      <div className="text-zinc-400 text-xs font-normal pl-5 pr-2 pb-1 leading-relaxed">
+                        If the Mystery Song is <strong>Tum Hi Ho</strong> from Aashiqui 2 (2013):<br/><br/>
+                        Guessing <strong>Channa Mereya (2016)</strong> would reveal <em>Arijit Singh</em> in Blue.<br/>
+                        Guessing <strong>Sunn Raha Hai (2013)</strong> would reveal <em>2013</em> and <em>Aashiqui 2</em> in Red.
+                      </div>
+                    )}
                   </div>
-                  <div className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex items-center gap-2 cursor-not-allowed opacity-70">
-                    <span className="text-zinc-500">▶</span> Lifelines
+
+                  {/* Interactive Lifelines Accordion */}
+                  <div 
+                    className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex flex-col gap-2 cursor-pointer transition-colors hover:bg-[#1a1a1a]"
+                    onClick={() => setShowLifelinesInfo(!showLifelinesInfo)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-zinc-500 transition-transform ${showLifelinesInfo ? 'rotate-90' : ''}`}>▶</span> 
+                      <span className="text-zinc-300">Lifelines</span>
+                    </div>
+                    {showLifelinesInfo && (
+                      <div className="text-zinc-400 text-xs font-normal pl-5 pr-2 pb-1 leading-relaxed">
+                        Stuck? You get two lifelines to help you out.<br/><br/>
+                        • <strong>After Guess 4:</strong> You can reveal one Cast or Audio bubble.<br/>
+                        • <strong>After Guess 6:</strong> You can reveal the Movie bubble, or any other bubble.<br/><br/>
+                        Click the lifeline button, then tap a hidden bubble to reveal it!
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="mt-8 flex justify-center">
-                  <button onClick={() => setCurrentScreen('game')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-8 rounded-full transition-colors">
+                  <button onClick={() => setCurrentScreen('game')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-8 rounded-full transition-colors shadow-lg shadow-red-900/20">
                     Start Playing
                   </button>
                 </div>
@@ -446,16 +498,44 @@ export default function BollyGuesser() {
               </div>
               
               <div className="w-full flex flex-col items-center gap-3 border-t border-[#a62b2b]/20 pt-5">
-                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1">
-                  Movie <span className="text-[10px] text-zinc-500 border rounded-full w-3 h-3 flex items-center justify-center" title="Reveals early if you guess a song from the same movie, OR manually via the 6th guess lifeline">i</span>
+                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1 relative">
+                  Movie 
+                  <span 
+                    className="text-[10px] text-zinc-500 border border-zinc-600 rounded-full w-4 h-4 flex items-center justify-center cursor-pointer hover:bg-zinc-800 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTooltip(activeTooltip === 'movie' ? null : 'movie');
+                    }}
+                  >
+                    i
+                  </span>
+                  {activeTooltip === 'movie' && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-800 text-zinc-200 text-[11px] font-normal p-2.5 rounded-lg w-52 z-10 shadow-xl text-center border border-zinc-700 leading-tight">
+                      Reveals early if you guess a song from the same movie, OR manually via the 6th guess lifeline.
+                    </div>
+                  )}
                 </span>
                 {renderPill(targetSong?.movie, isMovieRevealed, 'bg-[#a62b2b]', 'bg-[#a62b2b]/20', 'hover:bg-[#a62b2b]/60', true)}
               </div>
             </div>
 
             <div className="bg-[#1a1a1a] border border-[#4a8a3a]/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-md">
-              <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1">
-                Cast <span className="text-[10px] text-zinc-500 border rounded-full w-3 h-3 flex items-center justify-center">i</span>
+              <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1 relative">
+                Cast 
+                <span 
+                  className="text-[10px] text-zinc-500 border border-zinc-600 rounded-full w-4 h-4 flex items-center justify-center cursor-pointer hover:bg-zinc-800 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveTooltip(activeTooltip === 'cast' ? null : 'cast');
+                  }}
+                >
+                  i
+                </span>
+                {activeTooltip === 'cast' && (
+                  <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-800 text-zinc-200 text-[11px] font-normal p-2.5 rounded-lg w-52 z-10 shadow-xl text-center border border-zinc-700 leading-tight">
+                    Primary actors in the movie. Guessed actors match if they share any part of the name.
+                  </div>
+                )}
               </span>
               <div className="flex flex-wrap justify-center gap-3 w-full">
                 {targetSong?.actors.filter(isValidName).map((actor, idx) => (
