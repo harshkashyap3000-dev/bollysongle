@@ -1,22 +1,17 @@
 export interface Song {
-  id: number;
+  id: string | number;
   title: string;
+  movie: string;
+  year: number;
+  actors: string[];
   singers: string[];
   composer: string;
-  movie: string;
-  actors: string[];
-  year: number;
 }
 
-export type MatchStatus = "correct" | "partial" | "incorrect";
-
-export interface GuessEvaluation {
+export interface GuessResult {
   song: Song;
-  titleMatch: boolean;
-  singerStatus: MatchStatus;
-  composerStatus: MatchStatus;
-  movieStatus: MatchStatus;
-  actorStatus: MatchStatus;
-  yearStatus: MatchStatus;
-  yearDirection: "higher" | "lower" | "equal";
+  yearMatch: 'correct' | 'higher' | 'lower';
+  movieMatch: 'correct' | 'incorrect';
+  actorsMatch: 'correct' | 'partial' | 'incorrect';
+  composerMatch: 'correct' | 'incorrect';
 }
