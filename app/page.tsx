@@ -155,7 +155,6 @@ export default function BollyGuesser() {
     setGuesses(updatedGuesses);
     setSearchTerm('');
 
-    // Force both IDs to Strings to prevent type mismatch bugs
     if (String(song.id) === String(targetSong.id)) {
       setHasWon(true);
       setIsGameOver(true);
@@ -203,7 +202,6 @@ export default function BollyGuesser() {
     setActiveLifeline(null);
   };
 
- // Automatically reveals if guessed in any past guess, revealed via lifeline, OR matched by a previous guess!
   const isMovieRevealed = isGameOver || 
     guesses.some((g) => g.song.movie.toLowerCase() === targetSong?.movie.toLowerCase()) || 
     revealedHints.includes(targetSong?.movie || '');
@@ -224,11 +222,9 @@ export default function BollyGuesser() {
     
     const targetActorParts = actor.toLowerCase().trim().split(/\s+/);
     
-Logan:
     return guesses.some((g) => {
       return (g.song.actors || []).some((guessActor) => {
         const guessActorParts = guessActor.toLowerCase().trim().split(/\s+/);
-        // If any part of the name matches (e.g., "Ameesha" matches "Amisha" or "Patel" matches "Patel")
         return targetActorParts.some(tp => guessActorParts.some(gp => tp === gp));
       });
     });
@@ -258,11 +254,9 @@ Logan:
     );
   };
 
-  // --- NEW SHARING FORMAT LOGIC ---
   const copyResults = () => {
     const numWords = ['FAILED', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
     
-    // Fixes the "FAILED turns!" grammar issue
     let headerText = '';
     if (hasWon) {
       headerText = `BollySongle #${dayNumber}: ${numWords[guesses.length]} ${guesses.length === 1 ? 'turn' : 'turns'}!`;
@@ -281,20 +275,17 @@ Logan:
         return '🔴☑️|🟢☑️|🔵☑️';
       }
 
-      // 1. Red Score (Year + Movie)
       let redScore = 0;
       if (g.song.year === targetSong?.year) redScore++;
       if (g.song.movie === targetSong?.movie) redScore++;
       const redStr = redScore === 2 ? '☑️' : redScore === 0 ? '❌' : getNumberEmoji(redScore);
 
-      // 2. Green Score (Cast)
       const targetActors = new Set(targetSong?.actors || []);
       const guessActors = new Set(g.song.actors);
       let actorScore = 0;
       guessActors.forEach(actor => { if (targetActors.has(actor)) actorScore++; });
       const greenStr = (actorScore === targetActors.size && targetActors.size > 0) ? '☑️' : actorScore === 0 ? '❌' : getNumberEmoji(actorScore);
 
-      // 3. Blue Score (Audio: Music Director + Singers)
       const targetAudio = new Set([targetSong?.composer, ...(targetSong?.singers || [])].filter(Boolean));
       const guessAudio = new Set([g.song.composer, ...g.song.singers].filter(Boolean));
       let audioScore = 0;
@@ -304,7 +295,6 @@ Logan:
       return `🔴${redStr}|🟢${greenStr}|🔵${blueStr}`;
     }).join('\n');
 
-    // Added https:// so messaging apps automatically make it clickable
     const footer = `\n\nPlay at https://bollysongle.vercel.app\n\n🔴: Year + Movie\n🟢: Cast\n🔵: Audio (Music Director + Singers)`;
 
     navigator.clipboard.writeText(header + '\n' + grid + footer);
@@ -454,7 +444,11 @@ Logan:
             <div className="bg-[#1a1a1a] border border-[#3a5a9a]/30 rounded-xl p-6 flex flex-col items-center gap-6 shadow-md">
               <div className="w-full flex flex-col items-center gap-3">
                 <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Music Director</span>
-                {renderPill(targetSong?.composer, isComposerRevealed, 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')}
+                {targetSong?.composer && targetSong.composer !== 'Various / Unknown' ? (
+                  renderPill(targetSong.composer, isComposerRevealed, 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')
+                ) : (
+                  <div className="text-xs text-zinc-500 italic py-1.5">Not Available</div>
+                )}
               </div>
               
               <div className="w-full flex flex-col items-center gap-3">
