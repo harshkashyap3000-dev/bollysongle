@@ -13,6 +13,25 @@ const altKeywords = [
   'lofi', 'lo-fi', 'instrumental', 'karaoke', 'acoustic', 'mix', 'edit'
 ];
 
+// Helper to validate scraper strings (rejects garbage handles like "Blake.08" or numbers)
+const isValidName = (name: string | undefined): boolean => {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  if (/\d/.test(lower) || lower.includes('.') || lower === 'various / unknown') {
+    return false;
+  }
+  return true;
+};
+
+// --- MOVIE-LEVEL MUSIC DIRECTOR MAPPING ---
+const movieComposerMap = new Map<string, string>();
+
+(rawSongs as Song[]).forEach((s) => {
+  if (isValidName(s.composer) && !s.composer.toLowerCase().includes('kishore kumar') && !s.composer.toLowerCase().includes('mohammed rafi') && !movieComposerMap.has(s.movie)) {
+    movieComposerMap.set(s.movie, s.composer);
+  }
+});
+
 const songs: Song[] = (rawSongs as Song[]).filter((s) => {
   const lowerTitle = s.title.toLowerCase();
   const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTitle));
@@ -20,8 +39,12 @@ const songs: Song[] = (rawSongs as Song[]).filter((s) => {
 
   return !isAlt && !isPre2000;
 }).map((s) => {
-  // CLEANUP: If the scraper accidentally put a legacy singer/actor as the composer, clear it or fix it
-  if (s.composer?.toLowerCase().includes('kishore kumar') || s.composer?.toLowerCase().includes('mohammed rafi')) {
+  const sharedComposer = movieComposerMap.get(s.movie);
+  if (sharedComposer) {
+    return { ...s, composer: sharedComposer };
+  }
+  // Sanitize track-level composer if invalid
+  if (!isValidName(s.composer)) {
     return { ...s, composer: 'Various / Unknown' };
   }
   return s;
@@ -211,6 +234,7 @@ export default function BollyGuesser() {
     revealedHints.includes(targetSong?.composer || '');
 
   const isSingerRevealed = (singer: string) => {
+    if (!isValidName(singer)) return true; // auto-hide invalid scraped entries
     const targetLower = singer.toLowerCase();
     return isGameOver || 
       guesses.some((g) => g.song.singers.some(s => s.toLowerCase() === targetLower)) || 
@@ -218,6 +242,7 @@ export default function BollyGuesser() {
   };
 
   const isActorRevealed = (actor: string) => {
+    if (!isValidName(actor)) return true;
     if (isGameOver || revealedHints.includes(actor)) return true;
     
     const targetActorParts = actor.toLowerCase().trim().split(/\s+/);
@@ -231,7 +256,7 @@ export default function BollyGuesser() {
   };
 
   const renderPill = (value: string | undefined, isRevealed: boolean, baseColor: string, emptyColor: string, hoverColor: string, isMoviePill = false) => {
-    if (!value) return null;
+    if (!value || !isValidName(value)) return null;
     const canBeRevealedByCurrentLifeline = isMoviePill ? activeLifeline === 2 : activeLifeline !== null;
     const isClickable = canBeRevealedByCurrentLifeline && !isRevealed;
 
@@ -433,7 +458,7 @@ export default function BollyGuesser() {
                 Cast <span className="text-[10px] text-zinc-500 border rounded-full w-3 h-3 flex items-center justify-center">i</span>
               </span>
               <div className="flex flex-wrap justify-center gap-3 w-full">
-                {targetSong?.actors.map((actor, idx) => (
+                {targetSong?.actors.filter(isValidName).map((actor, idx) => (
                   <React.Fragment key={idx}>
                     {renderPill(actor, isActorRevealed(actor), 'bg-[#4a8a3a]', 'bg-[#4a8a3a]/20', 'hover:bg-[#4a8a3a]/60')}
                   </React.Fragment>
@@ -444,8 +469,8 @@ export default function BollyGuesser() {
             <div className="bg-[#1a1a1a] border border-[#3a5a9a]/30 rounded-xl p-6 flex flex-col items-center gap-6 shadow-md">
               <div className="w-full flex flex-col items-center gap-3">
                 <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Music Director</span>
-                {targetSong?.composer && targetSong.composer !== 'Various / Unknown' ? (
-                  renderPill(targetSong.composer, isComposerRevealed, 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')
+                {isValidName(targetSong?.composer) ? (
+                  renderPill(targetSong?.composer, isComposerRevealed, 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')
                 ) : (
                   <div className="text-xs text-zinc-500 italic py-1.5">Not Available</div>
                 )}
@@ -454,7 +479,7 @@ export default function BollyGuesser() {
               <div className="w-full flex flex-col items-center gap-3">
                 <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Singers</span>
                 <div className="flex flex-wrap justify-center gap-3 w-full">
-                  {targetSong?.singers.map((singer, idx) => (
+                  {targetSong?.singers.filter(isValidName).map((singer, idx) => (
                     <React.Fragment key={idx}>
                       {renderPill(singer, isSingerRevealed(singer), 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')}
                     </React.Fragment>
