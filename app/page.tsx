@@ -284,4 +284,4 @@ export default function BollyGuesser() {
     const isClickable = canBeRevealedByCurrentLifeline && !isRevealed;
 
     if (!isRevealed) {
-      return }
+      return };
