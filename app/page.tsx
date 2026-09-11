@@ -121,7 +121,6 @@ export default function BollyGuesser() {
   }, [currentScreen]);
 
   const startNewGame = (mode: 'daily' | 'unlimited') => {
-    // Push state so mobile back button works properly
     window.history.pushState({ screen: 'game' }, '');
 
     setGameMode(mode);
@@ -258,7 +257,7 @@ export default function BollyGuesser() {
     revealedHints.includes(targetSong?.composer || '');
 
   const isSingerRevealed = (singer: string) => {
-    if (!isValidName(singer)) return true; // auto-hide invalid scraped entries
+    if (!isValidName(singer)) return true;
     const targetLower = singer.toLowerCase();
     return isGameOver || 
       guesses.some((g) => (g.song.singers || []).some(s => s.toLowerCase() === targetLower)) || 
