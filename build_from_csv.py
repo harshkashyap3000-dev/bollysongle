@@ -1,58 +1,35 @@
-import sqlite3
 import csv
+import json
+import os
 
-def build_database_from_csv():
-    conn = sqlite3.connect('songs.db')
-    cursor = conn.cursor()
-
-    # Recreate the exact table structure your app expects
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS songs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            movie TEXT,
-            trackName TEXT,
-            musicDirector TEXT,
-            singers TEXT,
-            cast TEXT,
-            album TEXT,
-            releaseYear TEXT,
-            coverArt TEXT
-        )
-    ''')
+def build_json_from_csv():
+    # Ensure the 'data' directory exists so we don't get a folder error
+    os.makedirs('data', exist_ok=True)
     
-    # Clear out the old dirty data
-    cursor.execute('DELETE FROM songs')
-
+    songs_list = []
     try:
         with open('perfect_dataset.csv', 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
-            
-            count = 0
             for row in reader:
-                cursor.execute('''
-                    INSERT INTO songs (movie, trackName, musicDirector, singers, cast, album, releaseYear, coverArt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    row.get('movie', '').strip(),
-                    row.get('trackname', '').strip(),     # Matches your CSV header exactly
-                    row.get('musicDirector', '').strip(),
-                    row.get('singers', '').strip(),
-                    row.get('cast', '').strip(),
-                    row.get('movie', '').strip(),         # Using movie name as a fallback for album
-                    str(row.get('releaseYear', '')).strip(),
-                    ''                                    # Leaving coverArt blank for now
-                ))
-                count += 1
+                song_obj = {
+                    "movie": row.get('movie', '').strip(),
+                    "trackName": row.get('trackname', '').strip(),
+                    "musicDirector": row.get('musicDirector', '').strip(),
+                    "singers": row.get('singers', '').strip(),
+                    "cast": row.get('cast', '').strip(),
+                    "releaseYear": str(row.get('releaseYear', '')).strip(),
+                    "isFamous": 1 # Adding this for your 75/25 logic later
+                }
+                songs_list.append(song_obj)
 
-        conn.commit()
-        print(f"🎉 Successfully loaded {count} perfect tracks directly from CSV into the database!")
+        # Save directly to the path your page.tsx is importing from
+        with open('data/songs.json', 'w', encoding='utf-8') as jf:
+            json.dump(songs_list, jf, indent=2)
+            
+        print(f"🎉 Successfully saved {len(songs_list)} perfect tracks to data/songs.json!")
 
     except FileNotFoundError:
-        print("❌ Error: 'perfect_dataset.csv' not found. Please save your Excel file as CSV in this folder.")
-    except Exception as e:
-        print(f"⚠️ An error occurred: {e}")
-    finally:
-        conn.close()
+        print("❌ Error: 'perfect_dataset.csv' not found. Make sure it is in the same folder.")
 
 if __name__ == '__main__':
-    build_database_from_csv()
+    build_json_from_csv()
