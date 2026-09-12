@@ -2,18 +2,61 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import rawSongs from '../data/songs.json';
-import { Song, GuessResult } from '../types/game';
-import { evaluateGuess } from '../utils/gameLogic';
+
+// --- STRICT INTERFACE MATCHING THE DATASET SCHEMA ---
+export interface Song {
+  movie: string;
+  trackName: string;
+  musicDirector: string;
+  singers: string;
+  cast: string;
+  releaseYear: string;
+  isFamous: number;
+}
+
+// Internal type extending the raw Song to include a unique ID for React rendering & game logic
+export type GameSong = Song & { id: string };
+
+export interface GuessResult {
+  song: GameSong;
+  releaseYearMatch: 'correct' | 'higher' | 'lower';
+  movieMatch: 'correct' | 'incorrect';
+  musicDirectorMatch: 'correct' | 'incorrect';
+}
 
 const MAX_GUESSES = 7;
 
-// --- STRICT ALTERNATE VERSION FILTER ---
+// --- UTILS & GAME LOGIC ---
+
+const parseList = (str: string | undefined | null): string[] => {
+  if (!str) return [];
+  return str.split(',').map(s => s.trim()).filter(Boolean);
+};
+
+const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
+  const guessYear = Number(guess.releaseYear);
+  const targetYear = Number(target.releaseYear);
+  
+  let releaseYearMatch: 'correct' | 'higher' | 'lower' = 'correct';
+  if (guessYear < targetYear) {
+    releaseYearMatch = 'higher';
+  } else if (guessYear > targetYear) {
+    releaseYearMatch = 'lower';
+  }
+
+  return {
+    song: guess,
+    releaseYearMatch,
+    movieMatch: guess.movie.toLowerCase() === target.movie.toLowerCase() ? 'correct' : 'incorrect',
+    musicDirectorMatch: guess.musicDirector.toLowerCase() === target.musicDirector.toLowerCase() ? 'correct' : 'incorrect',
+  };
+};
+
 const altKeywords = [
   'remix', 'reprise', 'unplugged', 'revibe', 'version', 'mashup', 
   'lofi', 'lo-fi', 'instrumental', 'karaoke', 'acoustic', 'mix', 'edit'
 ];
 
-// Helper to validate scraper strings (rejects garbage handles like "Blake.08" or numbers)
 const isValidName = (name: string | undefined): boolean => {
   if (!name) return false;
   const lower = name.toLowerCase();
@@ -23,46 +66,32 @@ const isValidName = (name: string | undefined): boolean => {
   return true;
 };
 
-// --- MOVIE-LEVEL MUSIC DIRECTOR MAPPING ---
-const movieComposerMap = new Map();
+// --- PREPROCESSING & DATA INGESTION ---
+
+const movieMusicDirectorMap = new Map();
 
 (rawSongs as Song[]).forEach((s) => {
-  if (
-    isValidName(s.composer) && 
-    !(s.composer || '').toLowerCase().includes('kishore kumar') && 
-    !(s.composer || '').toLowerCase().includes('mohammed rafi') && 
-    !movieComposerMap.has(s.movie)
-  ) {
-    movieComposerMap.set(s.movie, s.composer);
+  if (isValidName(s.musicDirector) && !s.musicDirector.toLowerCase().includes('kishore kumar') && !s.musicDirector.toLowerCase().includes('mohammed rafi') && !movieMusicDirectorMap.has(s.movie)) {
+    movieMusicDirectorMap.set(s.movie, s.musicDirector);
   }
 });
 
-const songs: Song[] = (rawSongs as Song[]).filter((s) => {
-  const lowerTitle = (s.title || '').toLowerCase();
-  const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTitle));
-  const isPre2000 = Number(s.year) < 2000;
+const songs: GameSong[] = (rawSongs as Song[]).filter((s) => {
+  const lowerTrackName = s.trackName.toLowerCase();
+  const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTrackName));
+  const isPre2000 = Number(s.releaseYear) < 2000;
 
   return !isAlt && !isPre2000;
-}).map((s) => {
-  const sharedComposer = movieComposerMap.get(s.movie);
-  if (sharedComposer) {
-    return { ...s, composer: sharedComposer };
-  }
-  // Sanitize track-level composer if invalid
-  if (!isValidName(s.composer)) {
-    return { ...s, composer: 'Various / Unknown' };
-  }
-  return s;
+}).map((s, index) => {
+  const sharedMusicDirector = movieMusicDirectorMap.get(s.movie);
+  return { 
+    ...s, 
+    id: `\({s.movie}-\){s.trackName}-${index}`,
+    musicDirector: sharedMusicDirector || (isValidName(s.musicDirector) ? s.musicDirector : 'Various / Unknown')
+  };
 });
 
 // --- FAME CATEGORIZATION ENGINE ---
-const A_LIST = [
-  'shah rukh khan', 'salman khan', 'aamir khan', 'akshay kumar', 'hrithik roshan',
-  'amitabh bachchan', 'deepika padukone', 'priyanka chopra', 'kareena kapoor',
-  'ranbir kapoor', 'ranveer singh', 'alia bhatt', 'katrina kaif', 'ajay devgn',
-  'arijit singh', 'shreya ghoshal', 'a. r. rahman', 'pritam', 'vishal-shekhar',
-  'udit narayan', 'sonu nigam', 'kumar sanu', 'alka yagnik', 'sunidhi chauhan'
-];
 
 const moviesMap = new Map();
 const famousMovies: string[] = [];
@@ -74,10 +103,8 @@ songs.forEach((s) => {
 });
 
 Array.from(moviesMap.entries()).forEach(([movieName, movieSongs]) => {
-  const isFamous = movieSongs.some((song) => {
-    const text = [...(song.actors || []), ...(song.singers || []), song.composer || ''].join(' ').toLowerCase();
-    return A_LIST.some((star) => text.includes(star));
-  });
+  // Utilizing the newly provided isFamous schema property
+  const isFamous = movieSongs.some((song) => song.isFamous === 1);
 
   if (isFamous) famousMovies.push(movieName);
   else standardMovies.push(movieName);
@@ -104,12 +131,10 @@ export default function BollyGuesser() {
   const [dayNumber, setDayNumber] = useState(1);
   const [todayStr, setTodayStr] = useState('');
 
-  // UI States
   const [showExample, setShowExample] = useState(false);
   const [showLifelinesInfo, setShowLifelinesInfo] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<'movie' | 'cast' | null>(null);
 
-  // --- Browser Back Button Interceptor ---
   useEffect(() => {
     const handlePopState = () => {
       if (currentScreen !== 'menu') {
@@ -173,13 +198,13 @@ export default function BollyGuesser() {
     const guessedIds = new Set(guesses.map((g) => g.song.id));
     const term = searchTerm.toLowerCase().trim();
 
-    const getRelevanceScore = (song: Song, searchStr: string) => {
-      const title = (song.title || '').toLowerCase();
-      const movie = (song.movie || '').toLowerCase();
+    const getRelevanceScore = (song: GameSong, searchStr: string) => {
+      const trackName = song.trackName.toLowerCase();
+      const movie = song.movie.toLowerCase();
       
-      if (title === searchStr || movie === searchStr) return 0; 
-      if (title.startsWith(searchStr) || movie.startsWith(searchStr)) return 1; 
-      if (title.includes(` \({searchStr}`) || movie.includes(`\){searchStr}`)) return 2; 
+      if (trackName === searchStr || movie === searchStr) return 0; 
+      if (trackName.startsWith(searchStr) || movie.startsWith(searchStr)) return 1; 
+      if (trackName.includes(` \({searchStr}`) || movie.includes(`\){searchStr}`)) return 2; 
       return 3; 
     };
 
@@ -187,13 +212,13 @@ export default function BollyGuesser() {
       .filter(
         (s) =>
           !guessedIds.has(s.id) &&
-          ((s.title || '').toLowerCase().includes(term) || (s.movie || '').toLowerCase().includes(term))
+          (s.trackName.toLowerCase().includes(term) || s.movie.toLowerCase().includes(term))
       )
       .sort((a, b) => getRelevanceScore(a, term) - getRelevanceScore(b, term))
       .slice(0, 5); 
   }, [searchTerm, guesses, isGameOver, activeLifeline]);
 
-  const handleSelectSong = (song: Song) => {
+  const handleSelectSong = (song: GameSong) => {
     if (!targetSong || isGameOver) return;
 
     const result = evaluateGuess(song, targetSong);
@@ -201,7 +226,7 @@ export default function BollyGuesser() {
     setGuesses(updatedGuesses);
     setSearchTerm('');
 
-    if (String(song.id) === String(targetSong.id)) {
+    if (song.id === targetSong.id) {
       setHasWon(true);
       setIsGameOver(true);
       setTimeout(() => setShowEndModal(true), 500); 
@@ -211,29 +236,29 @@ export default function BollyGuesser() {
     }
   };
 
-  const { minYear, maxYear, isYearGuessed } = useMemo(() => {
+  const { minReleaseYear, maxReleaseYear, isReleaseYearGuessed } = useMemo(() => {
     let min = 2000;
     let max = 2024;
     let guessed = false;
 
     if (targetSong) {
       guesses.forEach((g) => {
-        const guessYear = Number(g.song.year);
-        const targetYear = Number(targetSong.year);
+        const guessReleaseYear = Number(g.song.releaseYear);
+        const targetReleaseYear = Number(targetSong.releaseYear);
 
-        if (guessYear === targetYear) {
-          min = guessYear;
-          max = guessYear;
+        if (guessReleaseYear === targetReleaseYear) {
+          min = guessReleaseYear;
+          max = guessReleaseYear;
           guessed = true;
-        } else if (guessYear < targetYear) {
-          if (guessYear >= min) min = guessYear; 
-        } else if (guessYear > targetYear) {
-          if (guessYear <= max) max = guessYear; 
+        } else if (guessReleaseYear < targetReleaseYear) {
+          if (guessReleaseYear >= min) min = guessReleaseYear; 
+        } else if (guessReleaseYear > targetReleaseYear) {
+          if (guessReleaseYear <= max) max = guessReleaseYear; 
         }
       });
     }
 
-    return { minYear: min, maxYear: max, isYearGuessed: guessed || isGameOver };
+    return { minReleaseYear: min, maxReleaseYear: max, isReleaseYearGuessed: guessed || isGameOver };
   }, [guesses, isGameOver, targetSong]);
 
   const handleLifelineClick = (level: number) => {
@@ -249,18 +274,18 @@ export default function BollyGuesser() {
   };
 
   const isMovieRevealed = isGameOver || 
-    guesses.some((g) => (g.song.movie || '').toLowerCase() === (targetSong?.movie || '').toLowerCase()) || 
+    guesses.some((g) => g.song.movie.toLowerCase() === targetSong?.movie.toLowerCase()) || 
     revealedHints.includes(targetSong?.movie || '');
 
-  const isComposerRevealed = isGameOver || 
-    guesses.some((g) => g.composerMatch === 'correct') || 
-    revealedHints.includes(targetSong?.composer || '');
+  const isMusicDirectorRevealed = isGameOver || 
+    guesses.some((g) => g.musicDirectorMatch === 'correct') || 
+    revealedHints.includes(targetSong?.musicDirector || '');
 
   const isSingerRevealed = (singer: string) => {
     if (!isValidName(singer)) return true;
     const targetLower = singer.toLowerCase();
     return isGameOver || 
-      guesses.some((g) => (g.song.singers || []).some(s => s.toLowerCase() === targetLower)) || 
+      guesses.some((g) => parseList(g.song.singers).some(s => s.toLowerCase() === targetLower)) || 
       revealedHints.includes(singer);
   };
 
@@ -271,7 +296,8 @@ export default function BollyGuesser() {
     const targetActorParts = actor.toLowerCase().trim().split(/\s+/);
     
     return guesses.some((g) => {
-      return (g.song.actors || []).some((guessActor) => {
+      const guessActorsList = parseList(g.song.cast);
+      return guessActorsList.some((guessActor) => {
         const guessActorParts = guessActor.toLowerCase().trim().split(/\s+/);
         return targetActorParts.some(tp => guessActorParts.some(gp => tp === gp));
       });
@@ -282,7 +308,434 @@ export default function BollyGuesser() {
     if (!value || !isValidName(value)) return null;
     const canBeRevealedByCurrentLifeline = isMoviePill ? activeLifeline === 2 : activeLifeline !== null;
     const isClickable = canBeRevealedByCurrentLifeline && !isRevealed;
-
-    if (!isRevealed) {
-      return ();
+        <div 
+          onClick={() => isClickable && revealSpecificPill(value)}
+          className={`h-[34px] min-w-[120px] rounded-full transition-all duration-300 ${emptyColor} ${
+            isClickable ? `cursor-pointer ring-2 ring-white/60 animate-pulse ${hoverColor} opacity-100` : 'opacity-60'
+          }`}
+          title={isClickable ? "Click to reveal!" : "Hidden"}
+        />
+      );
     }
+
+    return (
+      <div className={`px-5 py-1.5 h-[34px] rounded-full text-[13px] font-bold flex items-center justify-center min-w-[120px] whitespace-nowrap text-white shadow-inner shadow-black/40 ${baseColor}`}>
+        {value}
+      </div>
+    );
+  };
+
+  const copyResults = () => {
+    const numWords = ['FAILED', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
+    
+    let headerText = '';
+    if (hasWon) {
+      headerText = `BollySongle #${dayNumber}: ${numWords[guesses.length]} ${guesses.length === 1 ? 'turn' : 'turns'}!`;
+    } else {
+      headerText = `BollySongle #${dayNumber}: FAILED!`;
+    }
+    const header = `${headerText}\n${todayStr}\n`;
+
+    const getNumberEmoji = (num: number) => {
+      const emojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
+      return emojis[num] || num.toString();
+    };
+
+    const grid = guesses.map(g => {
+      if (g.song.id === targetSong?.id) {
+        return '🔴☑️|🟢☑️|🔵☑️';
+      }
+
+      let redScore = 0;
+      if (g.song.year === targetSong?.year) redScore++;
+      if (g.song.movie === targetSong?.movie) redScore++;
+      const redStr = redScore === 2 ? '☑️' : redScore === 0 ? '❌' : getNumberEmoji(redScore);
+
+      const targetActors = new Set(targetSong?.actors || []);
+      const guessActors = new Set(g.song.actors);
+      let actorScore = 0;
+      guessActors.forEach(actor => { if (targetActors.has(actor)) actorScore++; });
+      const greenStr = (actorScore === targetActors.size && targetActors.size > 0) ? '☑️' : actorScore === 0 ? '❌' : getNumberEmoji(actorScore);
+
+      const targetAudio = new Set([targetSong?.composer, ...(targetSong?.singers || [])].filter(Boolean));
+      const guessAudio = new Set([g.song.composer, ...g.song.singers].filter(Boolean));
+      let audioScore = 0;
+      guessAudio.forEach(item => { if (targetAudio.has(item)) audioScore++; });
+      const blueStr = (audioScore === targetAudio.size && targetAudio.size > 0) ? '☑️' : audioScore === 0 ? '❌' : getNumberEmoji(audioScore);
+
+      return `🔴${redStr}|🟢${greenStr}|🔵${blueStr}`;
+    }).join('\n');
+
+    const footer = `\n\nPlay at https://bollysongle.vercel.app\n\n🔴: Year + Movie\n🟢: Cast\n🔵: Audio (Music Director + Singers)`;
+
+    navigator.clipboard.writeText(header + '\n' + grid + footer);
+    alert('Results copied to clipboard!');
+  };
+
+  if (currentScreen === 'menu') {
+    return (
+      <main className="min-h-screen bg-[#111111] text-zinc-300 font-sans flex flex-col items-center justify-center p-6 relative">
+        <div className="absolute top-6 left-6 text-xl font-bold tracking-widest text-zinc-500">
+          Bolly<span className="text-red-500">S</span>ongle
+        </div>
+        
+        <div className="max-w-md w-full flex flex-col items-center text-center gap-6">
+          <h1 className="text-4xl md:text-5xl font-black text-white tracking-widest mb-2">
+            Bolly<span className="text-red-600">S</span>ongle
+          </h1>
+          <p className="text-lg font-semibold text-zinc-200">
+            Guess the Bollywood song in 7 attempts!
+          </p>
+          <p className="text-sm text-zinc-400 leading-relaxed mb-4">
+            Like Wordle, each guess uncovers common elements between your guess and the Mystery Song. <br/><br/>
+            A new Mystery Song is available everyday.
+          </p>
+          
+          <button 
+            onClick={() => startNewGame('daily')}
+            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-full text-base transition-colors shadow-lg shadow-red-900/20 flex items-center justify-center gap-2"
+          >
+            ▷ Play Today's Game
+          </button>
+          
+          <div className="w-full flex gap-3">
+            <button 
+              onClick={() => startNewGame('unlimited')}
+              className="flex-1 bg-[#1a1a1a] hover:bg-[#252525] border border-red-900/50 text-red-500 font-bold py-3 rounded-full text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              ∞ Play Unlimited
+            </button>
+            <button 
+              disabled
+              className="flex-1 bg-[#1a1a1a] border border-zinc-800 text-zinc-600 font-bold py-3 rounded-full text-sm opacity-50 cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              ▦ Past Games
+            </button>
+          </div>
+          
+          <p className="text-zinc-500 text-sm mt-6 font-medium">No: {dayNumber}</p>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main 
+      className="min-h-screen bg-[#111111] text-zinc-300 font-sans p-4 md:p-8 flex justify-center relative"
+      onClick={() => activeTooltip && setActiveTooltip(null)}
+    >
+      <div className="w-full max-w-5xl flex flex-col gap-6">
+        
+        <header className="w-full flex items-center justify-between pt-2 pb-2 border-b border-zinc-800/50">
+          <div className="text-lg font-black tracking-widest text-zinc-200 cursor-pointer" onClick={() => setCurrentScreen('menu')}>
+            Bolly<span className="text-red-600">S</span>ongle
+          </div>
+          <button onClick={() => setCurrentScreen('instructions')} className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center hover:bg-zinc-700 font-bold">?</button>
+        </header>
+
+        {currentScreen === 'instructions' && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+            <div className="bg-[#181818] border border-zinc-700/50 rounded-2xl max-w-lg w-full shadow-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto">
+              <div className="p-6">
+                <button onClick={() => setCurrentScreen('game')} className="absolute top-5 right-5 w-7 h-7 rounded-full bg-zinc-800 text-zinc-400 flex items-center justify-center hover:bg-zinc-700 hover:text-white transition-colors">✕</button>
+                
+                <h2 className="text-2xl font-bold text-white text-center mb-6">How To Play</h2>
+                
+                <p className="font-semibold text-zinc-200 mb-4">Guess the <i className="text-white font-bold">Mystery Song</i> in 7 attempts</p>
+                
+                <ul className="space-y-3 text-sm text-zinc-400 mb-8 list-disc pl-5">
+                  <li>Each guess must be a real Bollywood song released in or after 2000.</li>
+                  <li>After each guess, the game will reveal those features (like Year of Release, Cast, Music Director) of the Mystery Song that are in common with the Guessed Song.</li>
+                  <li>If you guess a track from the same movie as the Mystery Song, the <b>Movie Bubble</b> will automatically reveal!</li>
+                  {gameMode === 'daily' ? (
+                    <li>A new game is available at midnight everyday.</li>
+                  ) : (
+                    <li>You are playing <strong>Unlimited Mode</strong>. The song is completely random and will refresh every time you hit play!</li>
+                  )}
+                </ul>
+
+                <div className="flex flex-col gap-3">
+                  {/* Interactive Example Accordion */}
+                  <div 
+                    className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex flex-col gap-2 cursor-pointer transition-colors hover:bg-[#1a1a1a]"
+                    onClick={() => setShowExample(!showExample)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-zinc-500 transition-transform ${showExample ? 'rotate-90' : ''}`}>▶</span> 
+                      <span className="text-zinc-300">Example</span>
+                    </div>
+                    {showExample && (
+                      <div className="text-zinc-400 text-xs font-normal pl-5 pr-2 pb-1 leading-relaxed">
+                        If the Mystery Song is <strong>Tum Hi Ho</strong> from Aashiqui 2 (2013):<br/><br/>
+                        Guessing <strong>Channa Mereya (2016)</strong> would reveal <em>Arijit Singh</em> in Blue.<br/>
+                        Guessing <strong>Sunn Raha Hai (2013)</strong> would reveal <em>2013</em> and <em>Aashiqui 2</em> in Red.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Interactive Lifelines Accordion */}
+                  <div 
+                    className="bg-[#111111] p-3 rounded-lg border border-zinc-800 text-sm font-medium flex flex-col gap-2 cursor-pointer transition-colors hover:bg-[#1a1a1a]"
+                    onClick={() => setShowLifelinesInfo(!showLifelinesInfo)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`text-zinc-500 transition-transform ${showLifelinesInfo ? 'rotate-90' : ''}`}>▶</span> 
+                      <span className="text-zinc-300">Lifelines</span>
+                    </div>
+                    {showLifelinesInfo && (
+                      <div className="text-zinc-400 text-xs font-normal pl-5 pr-2 pb-1 leading-relaxed">
+                        Stuck? You get two lifelines to help you out.<br/><br/>
+                        • <strong>After Guess 4:</strong> You can reveal one Cast or Audio bubble.<br/>
+                        • <strong>After Guess 6:</strong> You can reveal the Movie bubble, or any other bubble.<br/><br/>
+                        Click the lifeline button, then tap a hidden bubble to reveal it!
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-8 flex justify-center">
+                  <button onClick={() => setCurrentScreen('game')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-8 rounded-full transition-colors shadow-lg shadow-red-900/20">
+                    Start Playing
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className={`flex flex-col lg:flex-row gap-6 relative ${currentScreen === 'instructions' ? 'opacity-30 pointer-events-none' : ''}`}>
+          
+          <div className={`flex-1 flex flex-col gap-4 transition-all duration-500 ${showEndModal ? 'blur-sm pointer-events-none' : ''}`}>
+            
+            <div className="bg-[#1a1a1a] border border-[#a62b2b]/30 rounded-xl p-6 flex flex-col items-center gap-6 shadow-md">
+              <div className="w-full flex flex-col items-center gap-3">
+                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Year of Release</span>
+                {isYearGuessed ? (
+                  renderPill(targetSong?.year.toString(), true, 'bg-[#a62b2b]', '', '')
+                ) : (
+                  <div className="flex items-center gap-4 w-full justify-center">
+                    <div className="px-6 py-1.5 rounded-full text-[13px] font-bold bg-[#a62b2b] text-white shadow-inner">{minYear}</div>
+                    <div className="w-12 h-[2px] bg-zinc-600 relative flex items-center justify-between">
+                      <div className="w-2 h-2 rounded-full bg-zinc-400 -ml-1"></div>
+                      <div className="w-2 h-2 rounded-full bg-zinc-400 -mr-1"></div>
+                    </div>
+                    <div className="px-6 py-1.5 rounded-full text-[13px] font-bold bg-[#a62b2b] text-white shadow-inner">{maxYear}</div>
+                  </div>
+                )}
+              </div>
+              
+              <div className="w-full flex flex-col items-center gap-3 border-t border-[#a62b2b]/20 pt-5">
+                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1 relative">
+                  Movie 
+                  <span 
+                    className="text-[10px] text-zinc-500 border border-zinc-600 rounded-full w-4 h-4 flex items-center justify-center cursor-pointer hover:bg-zinc-800 transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveTooltip(activeTooltip === 'movie' ? null : 'movie');
+                    }}
+                  >
+                    i
+                  </span>
+                  {activeTooltip === 'movie' && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-800 text-zinc-200 text-[11px] font-normal p-2.5 rounded-lg w-52 z-10 shadow-xl text-center border border-zinc-700 leading-tight">
+                      Reveals early if you guess a song from the same movie, OR manually via the 6th guess lifeline.
+                    </div>
+                  )}
+                </span>
+                {renderPill(targetSong?.movie, isMovieRevealed, 'bg-[#a62b2b]', 'bg-[#a62b2b]/20', 'hover:bg-[#a62b2b]/60', true)}
+              </div>
+            </div>
+
+            <div className="bg-[#1a1a1a] border border-[#4a8a3a]/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-md">
+              <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1 relative">
+                Cast 
+                <span 
+                  className="text-[10px] text-zinc-500 border border-zinc-600 rounded-full w-4 h-4 flex items-center justify-center cursor-pointer hover:bg-zinc-800 transition-colors"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveTooltip(activeTooltip === 'cast' ? null : 'cast');
+                  }}
+                >
+                  i
+                </span>
+                {activeTooltip === 'cast' && (
+                  <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-zinc-800 text-zinc-200 text-[11px] font-normal p-2.5 rounded-lg w-52 z-10 shadow-xl text-center border border-zinc-700 leading-tight">
+                    Primary actors in the movie. Guessed actors match if they share any part of the name.
+                  </div>
+                )}
+              </span>
+              <div className="flex flex-wrap justify-center gap-3 w-full">
+                {targetSong?.actors.filter(isValidName).map((actor, idx) => (
+                  <React.Fragment key={idx}>
+                    {renderPill(actor, isActorRevealed(actor), 'bg-[#4a8a3a]', 'bg-[#4a8a3a]/20', 'hover:bg-[#4a8a3a]/60')}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-[#1a1a1a] border border-[#3a5a9a]/30 rounded-xl p-6 flex flex-col items-center gap-6 shadow-md">
+              <div className="w-full flex flex-col items-center gap-3">
+                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Music Director</span>
+                {isValidName(targetSong?.composer) ? (
+                  renderPill(targetSong?.composer, isComposerRevealed, 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')
+                ) : (
+                  <div className="text-xs text-zinc-500 italic py-1.5">Not Available</div>
+                )}
+              </div>
+              
+              <div className="w-full flex flex-col items-center gap-3">
+                <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Singers</span>
+                <div className="flex flex-wrap justify-center gap-3 w-full">
+                  {targetSong?.singers.filter(isValidName).map((singer, idx) => (
+                    <React.Fragment key={idx}>
+                      {renderPill(singer, isSingerRevealed(singer), 'bg-[#3a5a9a]', 'bg-[#3a5a9a]/20', 'hover:bg-[#3a5a9a]/60')}
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`w-full lg:w-[420px] flex flex-col transition-all duration-500 ${showEndModal ? 'blur-sm pointer-events-none' : ''}`}>
+            
+            <div className="flex justify-between items-center mb-6 px-2 text-xs text-zinc-400 font-medium">
+              <span>#{dayNumber}</span>
+              <span>{todayStr}</span>
+            </div>
+            
+            <h2 className="text-center text-sm uppercase tracking-widest font-semibold text-zinc-200 mb-4">Guessed Songs</h2>
+
+            <div className="grid grid-cols-2 gap-2 mb-8">
+              {Array.from({ length: MAX_GUESSES }).map((_, idx) => {
+                const guess = guesses[idx];
+                const isFullRow = idx === MAX_GUESSES - 1;
+                
+                return (
+                  <div 
+                    key={idx} 
+                    className={`bg-[#222222] border border-zinc-800 rounded-full px-4 py-2 text-xs font-medium flex items-center ${isFullRow ? 'col-span-2' : ''}`}
+                  >
+                    <span className="text-zinc-500 w-4">{idx + 1}.</span>
+                    
+                    {guess ? (
+                      <div className="flex flex-1 items-center justify-between overflow-hidden pl-2">
+                        <span className="text-zinc-300 truncate pr-2">{guess.song.title}</span>
+                        {guess.song.id === targetSong?.id ? (
+                          <span className="text-emerald-500 flex-shrink-0 ml-auto">✓</span>
+                        ) : (
+                          <span className="text-zinc-500 flex items-center gap-1 flex-shrink-0 ml-auto bg-[#111111] px-2 py-0.5 rounded-full border border-zinc-800">
+                            {guess.song.year}
+                            {guess.yearMatch === 'higher' && <span className="text-amber-500 font-bold">↑</span>}
+                            {guess.yearMatch === 'lower' && <span className="text-amber-500 font-bold">↓</span>}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="flex-1 text-center text-zinc-600">—</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="border-t border-zinc-800/50 my-2"></div>
+
+            <div className="flex flex-col gap-3 mb-6">
+              <button 
+                disabled={guesses.length < 4 || usedLifelines.includes(1) || isGameOver}
+                onClick={() => handleLifelineClick(1)}
+                className={`border rounded-lg py-3 text-xs font-semibold flex items-center justify-between px-4 transition-all ${
+                  usedLifelines.includes(1) ? 'bg-zinc-900 border-zinc-800 text-zinc-600' : activeLifeline === 1 ? 'bg-amber-900/30 border-amber-500 text-amber-400 animate-pulse' : guesses.length >= 4 ? 'bg-[#1a1a1a] border-zinc-600 text-zinc-200 hover:bg-[#222] cursor-pointer' : 'bg-[#141414] border-zinc-800 text-zinc-700 cursor-not-allowed'
+                }`}
+              >
+                <span>✦</span>
+                {usedLifelines.includes(1) ? "Lifeline Used" : activeLifeline === 1 ? "Select a Cast or Audio bubble (Click to cancel)" : guesses.length >= 4 ? "Use Lifeline (Reveal Cast or Audio)" : "Unlock Lifeline after 4th guess"}
+                <span>✦</span>
+              </button>
+              <button 
+                disabled={guesses.length < 6 || usedLifelines.includes(2) || isGameOver}
+                onClick={() => handleLifelineClick(2)}
+                className={`border rounded-lg py-3 text-xs font-semibold flex items-center justify-between px-4 transition-all ${
+                  usedLifelines.includes(2) ? 'bg-zinc-900 border-zinc-800 text-zinc-600' : activeLifeline === 2 ? 'bg-amber-900/30 border-amber-500 text-amber-400 animate-pulse' : guesses.length >= 6 ? 'bg-[#1a1a1a] border-zinc-600 text-zinc-200 hover:bg-[#222] cursor-pointer' : 'bg-[#141414] border-zinc-800 text-zinc-700 cursor-not-allowed'
+                }`}
+              >
+                <span>✦</span>
+                {usedLifelines.includes(2) ? "Lifeline Used" : activeLifeline === 2 ? "Select ANY bubble (Click to cancel)" : guesses.length >= 6 ? "Use Lifeline (Reveal Movie, Cast or Audio)" : "Unlock Lifeline after 6th guess"}
+                <span>✦</span>
+              </button>
+            </div>
+
+            <div className="relative mt-auto">
+              <input
+                type="text"
+                disabled={isGameOver || activeLifeline !== null}
+                placeholder={activeLifeline !== null ? "Select a bubble to reveal..." : isGameOver ? (gameMode === 'daily' ? "Come back tomorrow!" : "Click Play Again for a new track!") : "Search for a Song or Movie"}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-[#1a1a1a] border border-zinc-800 rounded-xl py-3.5 px-4 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors disabled:opacity-50 text-center"
+              />
+              {filteredSongs.length > 0 && (
+                <ul className="absolute bottom-[calc(100%+8px)] left-0 right-0 bg-[#1e1e1e] border border-zinc-700 rounded-xl shadow-2xl overflow-hidden z-50">
+                  {filteredSongs.map((song) => (
+                    <li key={song.id} onClick={() => handleSelectSong(song)} className="px-4 py-3 hover:bg-[#2a2a2a] cursor-pointer flex flex-col border-b border-zinc-800/50 last:border-0">
+                      <span className="font-semibold text-sm text-zinc-100">{song.title}</span>
+                      <span className="text-xs text-zinc-500">{song.movie} ({song.year})</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {showEndModal && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-auto">
+              <div className="relative bg-[#111111] border border-zinc-700/50 rounded-2xl p-6 max-w-sm w-full flex flex-col items-center shadow-2xl shadow-black/80">
+                
+                <button 
+                  onClick={() => setShowEndModal(false)}
+                  className="absolute top-4 right-5 text-zinc-500 hover:text-white transition-colors"
+                >
+                  ✕
+                </button>
+                
+                <div className="w-full aspect-video bg-zinc-800 rounded-lg mb-4 mt-2 flex items-center justify-center overflow-hidden border border-zinc-700">
+                  {hasWon ? (
+                    <img src="/image_2ea782.jpg" alt="You are so clever" className="w-full h-full object-cover" />
+                  ) : (
+                    <img src="/image_2ea41f.jpg" alt="Disappointed" className="w-full h-full object-cover" />
+                  )}
+                </div>
+                
+                <h3 className="text-lg font-bold text-white mb-1">
+                  {hasWon ? "Congratulations!!!" : "Game Over"}
+                </h3>
+                
+                <p className="text-sm text-zinc-400 text-center mb-6">
+                  {hasWon ? `You correctly guessed the Mystery Song in ${guesses.length} turns.` : `The Mystery Song was ${targetSong?.title} from ${targetSong?.movie}.`}
+                </p>
+
+                {gameMode === 'unlimited' && (
+                  <button 
+                    onClick={() => startNewGame('unlimited')}
+                    className="w-full mb-6 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-full text-sm transition-colors shadow-lg shadow-red-900/20"
+                  >
+                    Play Again
+                  </button>
+                )}
+                
+                <div className="w-full flex items-center justify-between pt-4 border-t border-zinc-800/60 text-xs">
+                  <span className="text-zinc-500">BollySongle * {todayStr}</span>
+                  <button onClick={copyResults} className="bg-[#2a2a2a] hover:bg-[#333] text-white px-4 py-1.5 rounded-full font-bold flex items-center gap-2 transition-colors border border-zinc-700">
+                    Share <span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg></span>
+                  </button>
+                </div>
+
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </main>
+  );
+}
