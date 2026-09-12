@@ -308,6 +308,9 @@ export default function BollyGuesser() {
     if (!value || !isValidName(value)) return null;
     const canBeRevealedByCurrentLifeline = isMoviePill ? activeLifeline === 2 : activeLifeline !== null;
     const isClickable = canBeRevealedByCurrentLifeline && !isRevealed;
+
+    if (!isRevealed) {
+      return (
         <div 
           onClick={() => isClickable && revealSpecificPill(value)}
           className={`h-[34px] min-w-[120px] rounded-full transition-all duration-300 ${emptyColor} ${
@@ -317,13 +320,6 @@ export default function BollyGuesser() {
         />
       );
     }
-
-    return (
-      <div className={`px-5 py-1.5 h-[34px] rounded-full text-[13px] font-bold flex items-center justify-center min-w-[120px] whitespace-nowrap text-white shadow-inner shadow-black/40 ${baseColor}`}>
-        {value}
-      </div>
-    );
-  };
 
   const copyResults = () => {
     const numWords = ['FAILED', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
