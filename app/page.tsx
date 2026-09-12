@@ -1,9 +1,7 @@
 'use client';
 
-
 import React, { useState, useEffect, useMemo } from 'react';
 import rawSongs from '../data/songs.json';
-
 
 // --- STRICT INTERFACE MATCHING THE DATASET SCHEMA ---
 export interface Song {
@@ -16,10 +14,11 @@ export interface Song {
   isFamous: number;
 }
 
+// Raw JSON rows arrive with whatever column names the CSV had.
+type RawRecord = Record<string, unknown>;
 
 // Internal type extending the raw Song to include a unique ID for React rendering & game logic
 export type GameSong = Song & { id: string };
-
 
 export interface GuessResult {
   song: GameSong;
@@ -28,18 +27,14 @@ export interface GuessResult {
   musicDirectorMatch: 'correct' | 'incorrect';
 }
 
-
 const MAX_GUESSES = 7;
 
-
 // --- UTILS & GAME LOGIC ---
-
 
 const parseList = (str: string | undefined | null): string[] => {
   if (!str) return [];
   return str.split(',').map(s => s.trim()).filter(Boolean);
 };
-
 
 const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
   const guessYear = Number(guess.releaseYear);
@@ -52,7 +47,6 @@ const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
     releaseYearMatch = 'lower';
   }
 
-
   return {
     song: guess,
     releaseYearMatch,
@@ -61,41 +55,95 @@ const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
   };
 };
 
-
 const altKeywords = [
   'remix', 'reprise', 'unplugged', 'revibe', 'version', 'mashup', 
   'lofi', 'lo-fi', 'instrumental', 'karaoke', 'acoustic', 'mix', 'edit'
 ];
 
-
 const isValidName = (name: string | undefined): boolean => {
   if (!name) return false;
-  const lower = name.toLowerCase();
-  if (/\d/.test(lower) || lower.includes('.') || lower === 'various / unknown') {
-    return false;
-  }
+  const lower = name.trim().toLowerCase();
+  if (!lower) return false;
+  if (lower === 'various / unknown' || lower === 'various' || lower === 'unknown' || lower === 'n/a') return false;
+  if (/\d/.test(lower)) return false;      // digits in a person's name => junk row
+  if (!/[a-z]/.test(lower)) return false;   // must contain at least one letter
   return true;
 };
 
+// --- COLUMN NORMALISATION ---
+// The dataset is generated from perfect_dataset.csv, whose headers are
+// "movie, trackname, musicDirector, singers, cast, release year".
+// Those do NOT match the camelCase fields this component reads, and a UTF-8 BOM
+// on the CSV turns the first header into "\uFEFFmovie". Either mismatch silently
+// yields undefined fields -> blank pills and dead searches. So resolve the column
+// names once, tolerantly, instead of trusting them.
+
+const normaliseKey = (k: string): string =>
+  k.replace(/^\uFEFF/, '').replace(/[\s_\-]/g, '').toLowerCase();
+
+const FIELD_ALIASES: Record<keyof Song, string[]> = {
+  movie:         ['movie', 'moviename', 'film', 'filmname', 'album'],
+  trackName:     ['trackname', 'track', 'song', 'songname', 'title', 'songtitle'],
+  musicDirector: ['musicdirector', 'composer', 'music', 'musicby'],
+  singers:       ['singers', 'singer', 'vocals', 'artist', 'artists'],
+  cast:          ['cast', 'actors', 'starring', 'leadcast'],
+  releaseYear:   ['releaseyear', 'year', 'released', 'yearofrelease'],
+  isFamous:      ['isfamous', 'famous', 'popular', 'ispopular'],
+};
+
+const COLUMN_MAP: Partial<Record<keyof Song, string>> = (() => {
+  const rows = rawSongs as RawRecord[];
+  const present = rows.length ? Object.keys(rows[0]) : [];
+  const map: Partial<Record<keyof Song, string>> = {};
+  (Object.keys(FIELD_ALIASES) as (keyof Song)[]).forEach((field) => {
+    const hit = present.find((col) => FIELD_ALIASES[field].includes(normaliseKey(col)));
+    if (hit) map[field] = hit;
+  });
+  const missing = (['movie', 'trackName', 'releaseYear'] as (keyof Song)[]).filter((f) => !map[f]);
+  if (missing.length) {
+    console.warn('[BollySongle] Could not match dataset columns:', missing.join(', '));
+    console.warn('[BollySongle] Columns actually present:', JSON.stringify(present));
+  }
+  return map;
+})();
+
+const readField = (row: RawRecord, field: keyof Song): string => {
+  const col = COLUMN_MAP[field];
+  const raw = col ? row[col] : undefined;
+  if (raw === undefined || raw === null) return '';
+  return String(raw).trim();
+};
 
 // --- PREPROCESSING & DATA INGESTION ---
 
+const normalisedSongs: Song[] = (rawSongs as RawRecord[])
+  .map((row) => ({
+    movie:         readField(row, 'movie'),
+    trackName:     readField(row, 'trackName'),
+    musicDirector: readField(row, 'musicDirector'),
+    singers:       readField(row, 'singers'),
+    cast:          readField(row, 'cast'),
+    // pandas/Excel exports often write the year as 2013.0
+    releaseYear:   readField(row, 'releaseYear').replace(/\.0+$/, ''),
+    isFamous:      Number(readField(row, 'isFamous')) === 1 ? 1 : 0,
+  }))
+  .filter((s) => s.movie !== '' && s.trackName !== '');
 
 const movieMusicDirectorMap = new Map<string, string>();
 
-
-(rawSongs as Song[]).forEach((s) => {
-  if (isValidName(s.musicDirector) && !s.musicDirector.toLowerCase().includes('kishore kumar') && !s.musicDirector.toLowerCase().includes('mohammed rafi') && !movieMusicDirectorMap.has(s.movie)) {
+normalisedSongs.forEach((s) => {
+  const md = s.musicDirector.toLowerCase();
+  if (isValidName(s.musicDirector) && !md.includes('kishore kumar') && !md.includes('mohammed rafi') && !movieMusicDirectorMap.has(s.movie)) {
     movieMusicDirectorMap.set(s.movie, s.musicDirector);
   }
 });
 
-
-const songs: GameSong[] = (rawSongs as Song[]).filter((s) => {
+const songs: GameSong[] = normalisedSongs.filter((s) => {
   const lowerTrackName = s.trackName.toLowerCase();
   const isAlt = altKeywords.some(kw => new RegExp(`\\b${kw}\\b`).test(lowerTrackName));
-  const isPre2000 = Number(s.releaseYear) < 2000;
-
+  const year = Number(s.releaseYear);
+  // Keep rows with an unparseable year rather than silently dropping the whole dataset
+  const isPre2000 = Number.isFinite(year) && year > 0 && year < 2000;
 
   return !isAlt && !isPre2000;
 }).map((s, index) => {
@@ -107,39 +155,37 @@ const songs: GameSong[] = (rawSongs as Song[]).filter((s) => {
   };
 });
 
-
 // --- FAME CATEGORIZATION ENGINE ---
-
 
 const moviesMap = new Map<string, GameSong[]>();
 const famousMovies: string[] = [];
 const standardMovies: string[] = [];
-
 
 songs.forEach((s) => {
   if (!moviesMap.has(s.movie)) moviesMap.set(s.movie, []);
   moviesMap.get(s.movie)!.push(s);
 });
 
+const hasFameColumn = songs.some((s) => s.isFamous === 1);
 
 Array.from(moviesMap.entries()).forEach(([movieName, movieSongs]) => {
-  // Utilizing the newly provided isFamous schema property
-  const isFamous = movieSongs.some((song: GameSong) => song.isFamous === 1);
-
+  // Use the isFamous flag when the dataset provides one. perfect_dataset.csv does
+  // not, so fall back to track count: soundtracks with several surviving tracks are
+  // the better-known films.
+  const isFamous = hasFameColumn
+    ? movieSongs.some((song: GameSong) => song.isFamous === 1)
+    : movieSongs.length >= 3;
 
   if (isFamous) famousMovies.push(movieName);
   else standardMovies.push(movieName);
 });
 
-
 famousMovies.sort();
 standardMovies.sort();
-
 
 export default function BollyGuesser() {
   const [currentScreen, setCurrentScreen] = useState<'menu' | 'instructions' | 'game'>('menu');
   const [gameMode, setGameMode] = useState<'daily' | 'unlimited' | null>(null);
-
 
   const [targetSong, setTargetSong] = useState<GameSong | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -155,11 +201,9 @@ export default function BollyGuesser() {
   const [dayNumber, setDayNumber] = useState<number | string>(1);
   const [todayStr, setTodayStr] = useState('');
 
-
   const [showExample, setShowExample] = useState(false);
   const [showLifelinesInfo, setShowLifelinesInfo] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<'movie' | 'cast' | null>(null);
-
 
   useEffect(() => {
     const handlePopState = () => {
@@ -171,10 +215,8 @@ export default function BollyGuesser() {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [currentScreen]);
 
-
   const startNewGame = (mode: 'daily' | 'unlimited') => {
     window.history.pushState({ screen: 'game' }, '');
-
 
     setGameMode(mode);
     setGuesses([]);
@@ -185,7 +227,6 @@ export default function BollyGuesser() {
     setRevealedHints([]);
     setShowEndModal(false);
     setSearchTerm('');
-
 
     if (mode === 'daily') {
       const now = new Date();
@@ -201,7 +242,8 @@ export default function BollyGuesser() {
       const pool = isFamousDay && famousMovies.length > 0 ? famousMovies : standardMovies;
       const selectedMovieName = pool[(currentDayNumber * 997) % pool.length];
       
-      const movieSongs = moviesMap.get(selectedMovieName)!;
+      const movieSongs = moviesMap.get(selectedMovieName) || [];
+      if (movieSongs.length === 0) return;
       const targetTrack = movieSongs[(currentDayNumber * 17) % movieSongs.length];
       
       setTargetSong(targetTrack);
@@ -213,26 +255,24 @@ export default function BollyGuesser() {
       const pool = isFamousRound && famousMovies.length > 0 ? famousMovies : standardMovies;
       const selectedMovieName = pool[Math.floor(Math.random() * pool.length)];
       
-      const movieSongs = moviesMap.get(selectedMovieName)!;
+      const movieSongs = moviesMap.get(selectedMovieName) || [];
+      if (movieSongs.length === 0) return;
       const targetTrack = movieSongs[Math.floor(Math.random() * movieSongs.length)];
       
       setTargetSong(targetTrack);
     }
 
-
     setCurrentScreen('instructions');
   };
-
 
   const filteredSongs = useMemo(() => {
     if (!searchTerm.trim() || isGameOver || activeLifeline !== null) return [];
     const guessedIds = new Set(guesses.map((g) => g.song.id));
     const term = searchTerm.toLowerCase().trim();
 
-
     const getRelevanceScore = (song: GameSong, searchStr: string) => {
-      const trackName = song.trackName.toLowerCase();
-      const movie = song.movie.toLowerCase();
+      const trackName = (song.trackName || '').toLowerCase();
+      const movie = (song.movie || '').toLowerCase();
       
       if (trackName === searchStr || movie === searchStr) return 0; 
       if (trackName.startsWith(searchStr) || movie.startsWith(searchStr)) return 1; 
@@ -240,27 +280,24 @@ export default function BollyGuesser() {
       return 3; 
     };
 
-
     return songs
       .filter(
         (s) =>
           !guessedIds.has(s.id) &&
-          (s.trackName.toLowerCase().includes(term) || s.movie.toLowerCase().includes(term))
+          ((s.trackName || '').toLowerCase().includes(term) ||
+           (s.movie || '').toLowerCase().includes(term))
       )
       .sort((a, b) => getRelevanceScore(a, term) - getRelevanceScore(b, term))
-      .slice(0, 5); 
+      .slice(0, 8); 
   }, [searchTerm, guesses, isGameOver, activeLifeline]);
-
 
   const handleSelectSong = (song: GameSong) => {
     if (!targetSong || isGameOver) return;
-
 
     const result = evaluateGuess(song, targetSong);
     const updatedGuesses = [...guesses, result];
     setGuesses(updatedGuesses);
     setSearchTerm('');
-
 
     if (song.id === targetSong.id) {
       setHasWon(true);
@@ -272,18 +309,15 @@ export default function BollyGuesser() {
     }
   };
 
-
   const { minReleaseYear, maxReleaseYear, isReleaseYearGuessed } = useMemo(() => {
     let min = 2000;
     let max = 2024;
     let guessed = false;
 
-
     if (targetSong) {
       guesses.forEach((g) => {
         const guessReleaseYear = Number(g.song.releaseYear);
         const targetReleaseYear = Number(targetSong.releaseYear);
-
 
         if (guessReleaseYear === targetReleaseYear) {
           min = guessReleaseYear;
@@ -297,16 +331,13 @@ export default function BollyGuesser() {
       });
     }
 
-
     return { minReleaseYear: min, maxReleaseYear: max, isReleaseYearGuessed: guessed || isGameOver };
   }, [guesses, isGameOver, targetSong]);
-
 
   const handleLifelineClick = (level: number) => {
     if (usedLifelines.includes(level) || isGameOver) return;
     setActiveLifeline(prev => prev === level ? null : level);
   };
-
 
   const revealSpecificPill = (value: string) => {
     if (activeLifeline === null) return;
@@ -315,16 +346,13 @@ export default function BollyGuesser() {
     setActiveLifeline(null);
   };
 
-
   const isMovieRevealed = isGameOver || 
     guesses.some((g) => g.song.movie.toLowerCase() === targetSong?.movie.toLowerCase()) || 
     revealedHints.includes(targetSong?.movie || '');
 
-
   const isMusicDirectorRevealed = isGameOver || 
     guesses.some((g) => g.musicDirectorMatch === 'correct') || 
     revealedHints.includes(targetSong?.musicDirector || '');
-
 
   const isSingerRevealed = (singer: string) => {
     if (!isValidName(singer)) return true;
@@ -333,7 +361,6 @@ export default function BollyGuesser() {
       guesses.some((g) => parseList(g.song.singers).some(s => s.toLowerCase() === targetLower)) || 
       revealedHints.includes(singer);
   };
-
 
   const isActorRevealed = (actor: string) => {
     if (!isValidName(actor)) return true;
@@ -350,12 +377,10 @@ export default function BollyGuesser() {
     });
   };
 
-
   const renderPill = (value: string | undefined, isRevealed: boolean, baseColor: string, emptyColor: string, hoverColor: string, isMoviePill = false, skipValidation = false) => {
     if (!value || (!skipValidation && !isValidName(value))) return null;
     const canBeRevealedByCurrentLifeline = isMoviePill ? activeLifeline === 2 : activeLifeline !== null;
     const isClickable = canBeRevealedByCurrentLifeline && !isRevealed;
-
 
     if (!isRevealed) {
       return (
@@ -369,14 +394,12 @@ export default function BollyGuesser() {
       );
     }
 
-
     return (
       <div className={`h-[34px] min-w-[120px] px-5 rounded-full flex items-center justify-center text-[13px] font-bold text-white shadow-inner ${baseColor}`}>
         {value}
       </div>
     );
   };
-
 
   const copyResults = () => {
     const numWords = ['FAILED', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN'];
@@ -389,24 +412,20 @@ export default function BollyGuesser() {
     }
     const header = `${headerText}\n${todayStr}\n`;
 
-
     const getNumberEmoji = (num: number) => {
       const emojis = ['0️⃣', '1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'];
       return emojis[num] || num.toString();
     };
-
 
     const grid = guesses.map(g => {
       if (g.song.id === targetSong?.id) {
         return '🔴☑️|🟢☑️|🔵☑️';
       }
 
-
       let redScore = 0;
       if (g.song.releaseYear === targetSong?.releaseYear) redScore++;
       if (g.song.movie === targetSong?.movie) redScore++;
       const redStr = redScore === 2 ? '☑️' : redScore === 0 ? '❌' : getNumberEmoji(redScore);
-
 
       const targetActors = new Set(parseList(targetSong?.cast));
       const guessActors = new Set(parseList(g.song.cast));
@@ -414,25 +433,20 @@ export default function BollyGuesser() {
       guessActors.forEach(actor => { if (targetActors.has(actor)) actorScore++; });
       const greenStr = (actorScore === targetActors.size && targetActors.size > 0) ? '☑️' : actorScore === 0 ? '❌' : getNumberEmoji(actorScore);
 
-
       const targetAudio = new Set([targetSong?.musicDirector, ...parseList(targetSong?.singers)].filter(Boolean));
       const guessAudio = new Set([g.song.musicDirector, ...parseList(g.song.singers)].filter(Boolean));
       let audioScore = 0;
       guessAudio.forEach(item => { if (targetAudio.has(item)) audioScore++; });
       const blueStr = (audioScore === targetAudio.size && targetAudio.size > 0) ? '☑️' : audioScore === 0 ? '❌' : getNumberEmoji(audioScore);
 
-
       return `🔴${redStr}|🟢${greenStr}|🔵${blueStr}`;
     }).join('\n');
 
-
     const footer = `\n\nPlay at https://bollysongle.vercel.app\n\n🔴: Year + Movie\n🟢: Cast\n🔵: Audio (Music Director + Singers)`;
-
 
     navigator.clipboard.writeText(header + '\n' + grid + footer);
     alert('Results copied to clipboard!');
   };
-
 
   if (currentScreen === 'menu') {
     return (
@@ -481,7 +495,6 @@ export default function BollyGuesser() {
     );
   }
 
-
   return (
     <main 
       className="min-h-screen bg-[#111111] text-zinc-300 font-sans p-4 md:p-8 flex justify-center relative"
@@ -495,7 +508,6 @@ export default function BollyGuesser() {
           </div>
           <button onClick={() => setCurrentScreen('instructions')} className="w-8 h-8 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center hover:bg-zinc-700 font-bold">?</button>
         </header>
-
 
         {currentScreen === 'instructions' && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -518,7 +530,6 @@ export default function BollyGuesser() {
                   )}
                 </ul>
 
-
                 <div className="flex flex-col gap-3">
                   {/* Interactive Example Accordion */}
                   <div 
@@ -537,7 +548,6 @@ export default function BollyGuesser() {
                       </div>
                     )}
                   </div>
-
 
                   {/* Interactive Lifelines Accordion */}
                   <div 
@@ -559,7 +569,6 @@ export default function BollyGuesser() {
                   </div>
                 </div>
 
-
                 <div className="mt-8 flex justify-center">
                   <button onClick={() => setCurrentScreen('game')} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 px-8 rounded-full transition-colors shadow-lg shadow-red-900/20">
                     Start Playing
@@ -569,7 +578,6 @@ export default function BollyGuesser() {
             </div>
           </div>
         )}
-
 
         <div className={`flex flex-col lg:flex-row gap-6 relative ${currentScreen === 'instructions' ? 'opacity-30 pointer-events-none' : ''}`}>
           
@@ -610,10 +618,9 @@ export default function BollyGuesser() {
                     </div>
                   )}
                 </span>
-                {renderPill(targetSong?.movie, isMovieRevealed, 'bg-[#a62b2b]', 'bg-[#a62b2b]/20', 'hover:bg-[#a62b2b]/60', true)}
+                {renderPill(targetSong?.movie, isMovieRevealed, 'bg-[#a62b2b]', 'bg-[#a62b2b]/20', 'hover:bg-[#a62b2b]/60', true, true)}
               </div>
             </div>
-
 
             <div className="bg-[#1a1a1a] border border-[#4a8a3a]/30 rounded-xl p-6 flex flex-col items-center gap-4 shadow-md">
               <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold flex items-center gap-1 relative">
@@ -642,7 +649,6 @@ export default function BollyGuesser() {
               </div>
             </div>
 
-
             <div className="bg-[#1a1a1a] border border-[#3a5a9a]/30 rounded-xl p-6 flex flex-col items-center gap-6 shadow-md">
               <div className="w-full flex flex-col items-center gap-3">
                 <span className="text-[11px] uppercase tracking-widest text-zinc-100 font-semibold">Music Director</span>
@@ -666,7 +672,6 @@ export default function BollyGuesser() {
             </div>
           </div>
 
-
           <div className={`w-full lg:w-[420px] flex flex-col transition-all duration-500 ${showEndModal ? 'blur-sm pointer-events-none' : ''}`}>
             
             <div className="flex justify-between items-center mb-6 px-2 text-xs text-zinc-400 font-medium">
@@ -676,7 +681,6 @@ export default function BollyGuesser() {
             
             <h2 className="text-center text-sm uppercase tracking-widest font-semibold text-zinc-200 mb-4">Guessed Songs</h2>
 
-
             <div className="grid grid-cols-2 gap-2 mb-8">
               {Array.from({ length: MAX_GUESSES }).map((_, idx) => {
                 const guess = guesses[idx];
@@ -685,15 +689,20 @@ export default function BollyGuesser() {
                 return (
                   <div 
                     key={idx} 
-                    className={`bg-[#222222] border border-zinc-800 rounded-full px-4 py-2 text-xs font-medium flex items-center ${isFullRow ? 'col-span-2' : ''}`}
+                    className={`bg-[#222222] border border-zinc-800 rounded-2xl px-4 py-2 text-xs font-medium flex items-center min-h-[50px] ${isFullRow ? 'col-span-2' : ''}`}
                   >
-                    <span className="text-zinc-500 w-4">{idx + 1}.</span>
+                    <span className="text-zinc-500 w-4 flex-shrink-0">{idx + 1}.</span>
                     
                     {guess ? (
-                      <div className="flex flex-1 items-center justify-between overflow-hidden pl-2">
-                        <span className="text-zinc-300 truncate pr-2">{guess.song.trackName}</span>
+                      <div className="flex flex-1 items-center justify-between overflow-hidden pl-2 gap-2">
+                        <div className="flex flex-col overflow-hidden leading-tight">
+                          <span className="text-zinc-200 truncate">{guess.song.trackName}</span>
+                          <span className={`truncate text-[10px] mt-0.5 ${guess.movieMatch === 'correct' ? 'text-[#e06a6a] font-semibold' : 'text-zinc-500'}`}>
+                            {guess.song.movie}
+                          </span>
+                        </div>
                         {guess.song.id === targetSong?.id ? (
-                          <span className="text-emerald-500 flex-shrink-0 ml-auto">✓</span>
+                          <span className="text-emerald-500 flex-shrink-0 ml-auto text-sm">✓</span>
                         ) : (
                           <span className="text-zinc-500 flex items-center gap-1 flex-shrink-0 ml-auto bg-[#111111] px-2 py-0.5 rounded-full border border-zinc-800">
                             {guess.song.releaseYear}
@@ -710,9 +719,7 @@ export default function BollyGuesser() {
               })}
             </div>
 
-
             <div className="border-t border-zinc-800/50 my-2"></div>
-
 
             <div className="flex flex-col gap-3 mb-6">
               <button 
@@ -739,7 +746,6 @@ export default function BollyGuesser() {
               </button>
             </div>
 
-
             <div className="relative mt-auto">
               <input
                 type="text"
@@ -752,16 +758,20 @@ export default function BollyGuesser() {
               {filteredSongs.length > 0 && (
                 <ul className="absolute bottom-[calc(100%+8px)] left-0 right-0 bg-[#1e1e1e] border border-zinc-700 rounded-xl shadow-2xl overflow-hidden z-50">
                   {filteredSongs.map((song) => (
-                    <li key={song.id} onClick={() => handleSelectSong(song)} className="px-4 py-3 hover:bg-[#2a2a2a] cursor-pointer flex flex-col border-b border-zinc-800/50 last:border-0">
-                      <span className="font-semibold text-sm text-zinc-100">{song.trackName}</span>
-                      <span className="text-xs text-zinc-500">{song.movie} ({song.releaseYear})</span>
+                    <li key={song.id} onClick={() => handleSelectSong(song)} className="px-4 py-3 hover:bg-[#2a2a2a] cursor-pointer flex items-center justify-between gap-3 border-b border-zinc-800/50 last:border-0 text-left">
+                      <div className="flex flex-col overflow-hidden">
+                        <span className="font-semibold text-sm text-zinc-100 truncate">{song.trackName}</span>
+                        <span className="text-xs text-zinc-400 truncate mt-0.5">{song.movie}</span>
+                      </div>
+                      <span className="text-[11px] text-zinc-400 flex-shrink-0 bg-[#111111] px-2 py-0.5 rounded-full border border-zinc-800">
+                        {song.releaseYear}
+                      </span>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
           </div>
-
 
           {showEndModal && (
             <div className="absolute inset-0 z-50 flex items-center justify-center pointer-events-auto">
@@ -790,7 +800,6 @@ export default function BollyGuesser() {
                   {hasWon ? `You correctly guessed the Mystery Song in ${guesses.length} turns.` : `The Mystery Song was ${targetSong?.trackName} from ${targetSong?.movie}.`}
                 </p>
 
-
                 {gameMode === 'unlimited' && (
                   <button 
                     onClick={() => startNewGame('unlimited')}
@@ -807,11 +816,9 @@ export default function BollyGuesser() {
                   </button>
                 </div>
 
-
               </div>
             </div>
           )}
-
 
         </div>
       </div>
