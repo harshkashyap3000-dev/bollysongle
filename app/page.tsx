@@ -36,6 +36,27 @@ const parseList = (str: string | undefined | null): string[] => {
   return str.split(',').map(s => s.trim()).filter(Boolean);
 };
 
+// Canonical form for comparing two names. Folds case, diacritics, punctuation
+// and repeated spaces, so "A.R. Rahman" and "AR  Rahman" compare equal.
+// It compares the FULL name — never individual words. Matching on word tokens
+// makes every shared Bollywood surname (Khan, Kapoor, Kumar, Singh, Roy) a
+// false positive.
+const normaliseName = (name: string | undefined | null): string => {
+  if (!name) return '';
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    // Strip spaces and punctuation entirely so 'A.R. Rahman', 'AR Rahman' and
+    // 'A R Rahman' all reduce to the same key.
+    .replace(/[^a-z0-9]/g, '');
+};
+
+const sameName = (a: string | undefined | null, b: string | undefined | null): boolean => {
+  const x = normaliseName(a);
+  return x !== '' && x === normaliseName(b);
+};
+
 const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
   const guessYear = Number(guess.releaseYear);
   const targetYear = Number(target.releaseYear);
@@ -50,8 +71,8 @@ const evaluateGuess = (guess: GameSong, target: GameSong): GuessResult => {
   return {
     song: guess,
     releaseYearMatch,
-    movieMatch: guess.movie.toLowerCase() === target.movie.toLowerCase() ? 'correct' : 'incorrect',
-    musicDirectorMatch: guess.musicDirector.toLowerCase() === target.musicDirector.toLowerCase() ? 'correct' : 'incorrect',
+    movieMatch: sameName(guess.movie, target.movie) ? 'correct' : 'incorrect',
+    musicDirectorMatch: sameName(guess.musicDirector, target.musicDirector) ? 'correct' : 'incorrect',
   };
 };
 
@@ -347,7 +368,7 @@ export default function BollyGuesser() {
   };
 
   const isMovieRevealed = isGameOver || 
-    guesses.some((g) => g.song.movie.toLowerCase() === targetSong?.movie.toLowerCase()) || 
+    guesses.some((g) => sameName(g.song.movie, targetSong?.movie)) || 
     revealedHints.includes(targetSong?.movie || '');
 
   const isMusicDirectorRevealed = isGameOver || 
@@ -356,25 +377,20 @@ export default function BollyGuesser() {
 
   const isSingerRevealed = (singer: string) => {
     if (!isValidName(singer)) return true;
-    const targetLower = singer.toLowerCase();
     return isGameOver || 
-      guesses.some((g) => parseList(g.song.singers).some(s => s.toLowerCase() === targetLower)) || 
+      guesses.some((g) => parseList(g.song.singers).some(s => sameName(s, singer))) || 
       revealedHints.includes(singer);
   };
 
   const isActorRevealed = (actor: string) => {
     if (!isValidName(actor)) return true;
     if (isGameOver || revealedHints.includes(actor)) return true;
-    
-    const targetActorParts = actor.toLowerCase().trim().split(/\s+/);
-    
-    return guesses.some((g) => {
-      const guessActorsList = parseList(g.song.cast);
-      return guessActorsList.some((guessActor) => {
-        const guessActorParts = guessActor.toLowerCase().trim().split(/\s+/);
-        return targetActorParts.some(tp => guessActorParts.some(gp => tp === gp));
-      });
-    });
+
+    // Reveal only when a guessed film shares this exact person, not merely a
+    // surname. Anil Kapoor must not unlock Ranbir Kapoor.
+    return guesses.some((g) =>
+      parseList(g.song.cast).some((guessActor) => sameName(guessActor, actor))
+    );
   };
 
   const renderPill = (value: string | undefined, isRevealed: boolean, baseColor: string, emptyColor: string, hoverColor: string, isMoviePill = false, skipValidation = false) => {
@@ -424,17 +440,17 @@ export default function BollyGuesser() {
 
       let redScore = 0;
       if (g.song.releaseYear === targetSong?.releaseYear) redScore++;
-      if (g.song.movie === targetSong?.movie) redScore++;
+      if (sameName(g.song.movie, targetSong?.movie)) redScore++;
       const redStr = redScore === 2 ? '☑️' : redScore === 0 ? '❌' : getNumberEmoji(redScore);
 
-      const targetActors = new Set(parseList(targetSong?.cast));
-      const guessActors = new Set(parseList(g.song.cast));
+      const targetActors = new Set(parseList(targetSong?.cast).map(normaliseName).filter(Boolean));
+      const guessActors = new Set(parseList(g.song.cast).map(normaliseName).filter(Boolean));
       let actorScore = 0;
       guessActors.forEach(actor => { if (targetActors.has(actor)) actorScore++; });
       const greenStr = (actorScore === targetActors.size && targetActors.size > 0) ? '☑️' : actorScore === 0 ? '❌' : getNumberEmoji(actorScore);
 
-      const targetAudio = new Set([targetSong?.musicDirector, ...parseList(targetSong?.singers)].filter(Boolean));
-      const guessAudio = new Set([g.song.musicDirector, ...parseList(g.song.singers)].filter(Boolean));
+      const targetAudio = new Set([targetSong?.musicDirector, ...parseList(targetSong?.singers)].map(normaliseName).filter(Boolean));
+      const guessAudio = new Set([g.song.musicDirector, ...parseList(g.song.singers)].map(normaliseName).filter(Boolean));
       let audioScore = 0;
       guessAudio.forEach(item => { if (targetAudio.has(item)) audioScore++; });
       const blueStr = (audioScore === targetAudio.size && targetAudio.size > 0) ? '☑️' : audioScore === 0 ? '❌' : getNumberEmoji(audioScore);
